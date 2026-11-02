@@ -1,0 +1,395 @@
+name: Build APK
+on:
+  workflow_dispatch:
+  push:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: "8.7"
+      - name: Criar projeto e compilar
+        run: |
+          set -e
+          cat > settings.gradle.kts <<'EOF_FILE'
+          pluginManagement {
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "TecladoDev"
+          include(":app")
+          EOF_FILE
+          cat > build.gradle.kts <<'EOF_FILE'
+          plugins {
+              id("com.android.application") version "8.5.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+          }
+          EOF_FILE
+          cat > gradle.properties <<'EOF_FILE'
+          org.gradle.jvmargs=-Xmx2g
+          android.useAndroidX=true
+          EOF_FILE
+          mkdir -p app
+          cat > app/build.gradle.kts <<'EOF_FILE'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+          android {
+              namespace = "com.assistente.teclado"
+              compileSdk = 34
+              defaultConfig {
+                  applicationId = "com.assistente.teclado"
+                  minSdk = 21
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+          }
+          EOF_FILE
+          mkdir -p app/src/main
+          cat > app/src/main/AndroidManifest.xml <<'EOF_FILE'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application android:label="@string/app_name" android:allowBackup="false">
+                  <activity android:name=".MainActivity" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+                  <service
+                      android:name=".DevKeyboard"
+                      android:label="@string/app_name"
+                      android:permission="android.permission.BIND_INPUT_METHOD"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.view.InputMethod" />
+                      </intent-filter>
+                      <meta-data android:name="android.view.im" android:resource="@xml/method" />
+                  </service>
+              </application>
+          </manifest>
+          EOF_FILE
+          mkdir -p app/src/main/res/xml
+          cat > app/src/main/res/xml/method.xml <<'EOF_FILE'
+          <?xml version="1.0" encoding="utf-8"?>
+          <input-method xmlns:android="http://schemas.android.com/apk/res/android" />
+          EOF_FILE
+          mkdir -p app/src/main/res/values
+          cat > app/src/main/res/values/strings.xml <<'EOF_FILE'
+          <resources>
+              <string name="app_name">Teclado Dev</string>
+          </resources>
+          EOF_FILE
+          mkdir -p app/src/main/java/com/assistente/teclado
+          cat > app/src/main/java/com/assistente/teclado/MainActivity.kt <<'EOF_FILE'
+          package com.assistente.teclado
+
+          import android.app.Activity
+          import android.content.Context
+          import android.content.Intent
+          import android.os.Bundle
+          import android.provider.Settings
+          import android.view.inputmethod.InputMethodManager
+          import android.widget.Button
+          import android.widget.LinearLayout
+          import android.widget.TextView
+
+          class MainActivity : Activity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  val box = LinearLayout(this)
+                  box.orientation = LinearLayout.VERTICAL
+                  box.setPadding(48, 96, 48, 48)
+                  val t = TextView(this)
+                  t.text = "Teclado Dev\n\n1) Ative o teclado\n2) Escolha ele quando estiver no QuickEdit\n\nDigite < ou o começo de uma tag/propriedade e toque na sugestão. Digite ! em arquivo vazio para gerar o HTML5."
+                  t.textSize = 16f
+                  box.addView(t)
+                  val b1 = Button(this)
+                  b1.text = "1) Ativar teclado"
+                  b1.setOnClickListener { startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS)) }
+                  box.addView(b1)
+                  val b2 = Button(this)
+                  b2.text = "2) Escolher teclado"
+                  b2.setOnClickListener {
+                      (getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showInputMethodPicker()
+                  }
+                  box.addView(b2)
+                  setContentView(box)
+              }
+          }
+          EOF_FILE
+          mkdir -p app/src/main/java/com/assistente/teclado
+          cat > app/src/main/java/com/assistente/teclado/DevKeyboard.kt <<'EOF_FILE'
+          package com.assistente.teclado
+
+          import android.graphics.Color
+          import android.graphics.drawable.GradientDrawable
+          import android.inputmethodservice.InputMethodService
+          import android.os.Handler
+          import android.os.Looper
+          import android.view.KeyEvent
+          import android.view.MotionEvent
+          import android.view.View
+          import android.view.ViewGroup
+          import android.view.inputmethod.EditorInfo
+          import android.widget.Button
+          import android.widget.HorizontalScrollView
+          import android.widget.LinearLayout
+
+          class DevKeyboard : InputMethodService() {
+
+              private val tags = listOf("div","span","p","a","img","ul","ol","li","h1","h2","h3","h4","button","input","form","label","select","option","textarea","table","tr","td","th","section","header","footer","nav","main","article","aside","video","audio","canvas","script","style","link","meta","title","head","body","html","br","hr","iframe","strong","em","small","pre","code","svg","details","summary")
+              private val attrs = listOf("class","id","style","href","src","alt","type","value","placeholder","name","onclick","target","rel","width","height","disabled","required","checked","data-","aria-label","title","for","action","method","autoplay","controls","loop","hidden")
+              private val css = listOf("display","position","top","right","bottom","left","width","height","min-width","max-width","min-height","max-height","margin","margin-top","margin-bottom","padding","padding-top","padding-bottom","border","border-radius","background","background-color","background-image","color","font-size","font-family","font-weight","text-align","text-decoration","line-height","letter-spacing","flex","flex-direction","flex-wrap","justify-content","align-items","gap","grid","grid-template-columns","overflow","opacity","z-index","box-shadow","transition","transform","animation","cursor","content","visibility","object-fit","white-space","box-sizing","filter")
+              private val js = listOf("const","let","var","function","return","if","else","for","while","switch","case","break","continue","try","catch","class","new","async","await","document.getElementById","document.querySelector","document.querySelectorAll","document.createElement","addEventListener","console.log","setTimeout","setInterval","fetch","JSON.parse","JSON.stringify","localStorage.getItem","localStorage.setItem","Math.random","Math.floor","parseInt","innerHTML","textContent","classList.add","classList.remove","classList.toggle","appendChild","forEach","map","filter","push","length")
+              private val voidTags = setOf("br","hr","img","input","meta","link")
+
+              private val snippets = linkedMapOf(
+                  "html5" to "<!DOCTYPE html>\n<html lang=\"pt-BR\">\n<head>\n<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n<title>Documento</title>\n<style>\n\n</style>\n</head>\n<body>\n\n<script>\n\n</script>\n</body>\n</html>",
+                  "botão" to "<button id=\"btn\">Clique</button>",
+                  "link css" to "<link rel=\"stylesheet\" href=\"style.css\">",
+                  "script src" to "<script src=\"script.js\"></script>",
+                  "lista" to "<ul>\n  <li>Item 1</li>\n  <li>Item 2</li>\n</ul>",
+                  "form" to "<form>\n  <label>Nome</label>\n  <input type=\"text\" name=\"nome\">\n  <button type=\"submit\">Enviar</button>\n</form>",
+                  "flex centro" to "display: flex;\njustify-content: center;\nalign-items: center;",
+                  "grid 3" to "display: grid;\ngrid-template-columns: repeat(3, 1fr);\ngap: 10px;",
+                  "reset" to "* {\n  margin: 0;\n  padding: 0;\n  box-sizing: border-box;\n}",
+                  "media" to "@media (max-width: 600px) {\n  \n}",
+                  "click" to "document.getElementById('btn').addEventListener('click', () => {\n  \n});",
+                  "função" to "function nome() {\n  \n}"
+              )
+
+              private lateinit var sugBar: LinearLayout
+              private lateinit var keysBox: LinearLayout
+              private var shift = false
+              private var symbols = false
+              private val handler = Handler(Looper.getMainLooper())
+
+              private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+
+              override fun onCreateInputView(): View {
+                  val root = LinearLayout(this)
+                  root.orientation = LinearLayout.VERTICAL
+                  root.setBackgroundColor(Color.parseColor("#1e1e1e"))
+                  val scroll = HorizontalScrollView(this)
+                  scroll.isHorizontalScrollBarEnabled = false
+                  sugBar = LinearLayout(this)
+                  sugBar.orientation = LinearLayout.HORIZONTAL
+                  scroll.addView(sugBar)
+                  root.addView(scroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)))
+                  keysBox = LinearLayout(this)
+                  keysBox.orientation = LinearLayout.VERTICAL
+                  root.addView(keysBox)
+                  buildKeys()
+                  updateSug()
+                  return root
+              }
+
+              override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
+                  super.onStartInputView(info, restarting)
+                  if (::sugBar.isInitialized) updateSug()
+              }
+
+              override fun onUpdateSelection(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int) {
+                  super.onUpdateSelection(a, b, c, d, e, f)
+                  if (::sugBar.isInitialized) updateSug()
+              }
+
+              // ---------- teclas ----------
+              private fun btn(label: String, bg: String = "#3a3a3a", fg: String = "#ffffff", size: Float = 16f): Button {
+                  val b = Button(this)
+                  b.text = label
+                  b.isAllCaps = false
+                  b.textSize = size
+                  b.setTextColor(Color.parseColor(fg))
+                  b.minHeight = 0; b.minimumHeight = 0; b.minWidth = 0; b.minimumWidth = 0
+                  b.setPadding(dp(6), 0, dp(6), 0)
+                  val g = GradientDrawable()
+                  g.cornerRadius = dp(6).toFloat()
+                  g.setColor(Color.parseColor(bg))
+                  b.background = g
+                  return b
+              }
+
+              private fun row(): LinearLayout {
+                  val r = LinearLayout(this)
+                  r.orientation = LinearLayout.HORIZONTAL
+                  r.setPadding(dp(2), dp(2), dp(2), dp(2))
+                  keysBox.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
+                  return r
+              }
+
+              private fun LinearLayout.key(label: String, w: Float = 1f, bg: String = "#3a3a3a", action: () -> Unit): Button {
+                  val b = btn(label, bg)
+                  b.setOnClickListener { action() }
+                  val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, w)
+                  lp.setMargins(dp(2), 0, dp(2), 0)
+                  addView(b, lp)
+                  return b
+              }
+
+              private fun buildKeys() {
+                  keysBox.removeAllViews()
+                  val rows = if (symbols)
+                      listOf("1234567890", "<>/=\"'{}()", "[];:.,#-_!")
+                  else listOf("qwertyuiop", "asdfghjkl", "zxcvbnm")
+                  for ((i, line) in rows.withIndex()) {
+                      val r = row()
+                      if (i == 2) {
+                          if (!symbols) r.key(if (shift) "⇧" else "⇪", 1.5f, "#2d3a45") { shift = !shift; buildKeys() }
+                      }
+                      for (ch in line) {
+                          val s = if (!symbols && shift) ch.toString().uppercase() else ch.toString()
+                          r.key(s) { typeText(s); if (shift) { shift = false; buildKeys() } }
+                      }
+                      if (i == 2) {
+                          val del = r.key("⌫", 1.5f, "#2d3a45") {}
+                          del.setOnClickListener(null)
+                          del.setOnTouchListener(repeatDelete())
+                      }
+                  }
+                  val last = row()
+                  last.key(if (symbols) "abc" else "?123", 1.4f, "#2d3a45") { symbols = !symbols; buildKeys() }
+                  last.key("←") { moveLeft(1) }
+                  last.key("→") { sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_RIGHT) }
+                  last.key("Tab") { currentInputConnection?.commitText("  ", 1) }
+                  last.key("espaço", 3f) { typeText(" ") }
+                  last.key("⏎", 1.4f, "#0e639c") { enter() }
+              }
+
+              private fun repeatDelete(): View.OnTouchListener {
+                  val rep = object : Runnable {
+                      override fun run() {
+                          sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
+                          handler.postDelayed(this, 60)
+                      }
+                  }
+                  return View.OnTouchListener { v, ev ->
+                      when (ev.action) {
+                          MotionEvent.ACTION_DOWN -> {
+                              sendDownUpKeyEvents(KeyEvent.KEYCODE_DEL)
+                              handler.postDelayed(rep, 400)
+                          }
+                          MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> handler.removeCallbacks(rep)
+                      }
+                      true
+                  }
+              }
+
+              private fun moveLeft(n: Int) { repeat(n) { sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_LEFT) } }
+
+              // ---------- contexto ----------
+              private fun before(): String = currentInputConnection?.getTextBeforeCursor(2000, 0)?.toString() ?: ""
+
+              private fun context(b: String): String {
+                  val lt = b.lastIndexOf('<'); val gt = b.lastIndexOf('>')
+                  if (lt > gt) return if (Regex("^</?[\\w-]*$").matches(b.substring(lt))) "tag" else "attr"
+                  if (b.lastIndexOf("<style") > b.lastIndexOf("</style")) return "css"
+                  if (b.lastIndexOf("<script") > b.lastIndexOf("</script")) return "js"
+                  return "text"
+              }
+
+              private fun wordAt(b: String) = Regex("[\\w\\-.]*$").find(b)?.value ?: ""
+
+              // ---------- digitação ----------
+              private fun typeText(s: String) {
+                  val ic = currentInputConnection ?: return
+                  val b = before()
+                  if (s == "!" && b.isBlank()) { ic.commitText(snippets["html5"], 1); updateSug(); return }
+                  val ctx = context(b)
+                  val pairs = mapOf("{" to "}", "(" to ")", "[" to "]", "\"" to "\"")
+                  if (pairs.containsKey(s) && (s != "\"" || ctx != "text")) {
+                      ic.commitText(s + pairs[s], 1); moveLeft(1); updateSug(); return
+                  }
+                  ic.commitText(s, 1)
+                  if (s == ">") autoClose(b + ">")
+                  updateSug()
+              }
+
+              private fun autoClose(b: String) {
+                  val m = Regex("<([a-zA-Z][\\w-]*)(\\s[^<>]*)?>$").find(b) ?: return
+                  val name = m.groupValues[1]
+                  if (name.lowercase() in voidTags) return
+                  val after = currentInputConnection?.getTextAfterCursor(30, 0)?.toString() ?: ""
+                  if (after.startsWith("</$name")) return
+                  currentInputConnection?.commitText("</$name>", 1)
+                  moveLeft(name.length + 3)
+              }
+
+              private fun enter() {
+                  val ic = currentInputConnection ?: return
+                  val b = before()
+                  val line = b.substringAfterLast('\n')
+                  val indent = line.takeWhile { it == ' ' || it == '\t' }
+                  val after = ic.getTextAfterCursor(1, 0)?.toString() ?: ""
+                  val openTag = Regex("<([a-zA-Z][\\w-]*)[^<>]*>$").find(line)
+                  val extra = if (b.endsWith("{") || (openTag != null && openTag.groupValues[1].lowercase() !in voidTags)) "  " else ""
+                  if (extra.isNotEmpty() && (after == "}" || after == "<")) {
+                      ic.commitText("\n" + indent + extra + "\n" + indent, 1)
+                      moveLeft(1 + indent.length)
+                  } else ic.commitText("\n" + indent + extra, 1)
+                  updateSug()
+              }
+
+              // ---------- sugestões ----------
+              private fun updateSug() {
+                  sugBar.removeAllViews()
+                  val b = before()
+                  val w = wordAt(b)
+                  val ctx = context(b)
+                  if (w.isEmpty() || ctx == "text") {
+                      for ((k, v) in snippets) addSug(k, "#3d3a2d") {
+                          currentInputConnection?.commitText(v, 1); updateSug()
+                      }
+                      return
+                  }
+                  val list = when (ctx) { "tag" -> tags; "attr" -> attrs; "css" -> css; else -> js }
+                  val found = list.filter { it.startsWith(w, true) && !it.equals(w, true) }.take(14)
+                  for (x in found) addSug(x, "#2d3a45") { pick(x, w, ctx, b) }
+              }
+
+              private fun addSug(label: String, bg: String, action: () -> Unit) {
+                  val bt = btn(label, bg, "#9cdcfe", 15f)
+                  bt.setOnClickListener { action() }
+                  val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                  lp.setMargins(dp(3), dp(4), dp(3), dp(4))
+                  sugBar.addView(bt, lp)
+              }
+
+              private fun pick(x: String, w: String, ctx: String, b: String) {
+                  val ic = currentInputConnection ?: return
+                  ic.deleteSurroundingText(w.length, 0)
+                  when (ctx) {
+                      "tag" -> {
+                          val closing = b.dropLast(w.length).endsWith("</")
+                          if (closing || x in voidTags) ic.commitText("$x>", 1)
+                          else { ic.commitText("$x></$x>", 1); moveLeft(x.length + 3) }
+                      }
+                      "attr" -> if (x.endsWith("-")) ic.commitText(x, 1) else { ic.commitText("$x=\"\"", 1); moveLeft(1) }
+                      "css" -> { ic.commitText("$x: ;", 1); moveLeft(1) }
+                      else -> ic.commitText(x, 1)
+                  }
+                  updateSug()
+              }
+          }
+          EOF_FILE
+          gradle assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: teclado-dev-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
