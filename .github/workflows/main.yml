@@ -226,16 +226,16 @@ jobs:
                   return b
               }
 
-              private fun row(): LinearLayout {
+              private fun row(h: Int = 50): LinearLayout {
                   val r = LinearLayout(this)
                   r.orientation = LinearLayout.HORIZONTAL
                   r.setPadding(dp(2), dp(2), dp(2), dp(2))
-                  keysBox.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
+                  keysBox.addView(r, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(h)))
                   return r
               }
 
-              private fun LinearLayout.key(label: String, w: Float = 1f, bg: String = "#3a3a3a", action: () -> Unit): Button {
-                  val b = btn(label, bg)
+              private fun LinearLayout.key(label: String, w: Float = 1f, bg: String = "#3a3a3a", size: Float = 20f, action: () -> Unit): Button {
+                  val b = btn(label, bg, "#ffffff", size)
                   b.setOnClickListener { action() }
                   val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, w)
                   lp.setMargins(dp(2), 0, dp(2), 0)
@@ -245,14 +245,19 @@ jobs:
 
               private fun buildKeys() {
                   keysBox.removeAllViews()
+                  val u = row(44)
+                  u.key("Tab", 1.6f, "#2d3a45", 15f) { currentInputConnection?.commitText("  ", 1) }
+                  u.key("←", 1f, "#2d3a45", 18f) { moveLeft(1) }
+                  u.key("→", 1f, "#2d3a45", 18f) { sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_RIGHT) }
+                  for (c in listOf("<", ">", "/", "=", "\"", "{", "(")) u.key(c, 1f, "#3a3a3a", 18f) { typeText(c) }
+                  val n = row(46)
+                  for (ch in "1234567890") n.key(ch.toString(), 1f, "#333333", 18f) { typeText(ch.toString()) }
                   val rows = if (symbols)
-                      listOf("1234567890", "<>/=\"'{}()", "[];:.,#-_!")
-                  else listOf("qwertyuiop", "asdfghjkl", "zxcvbnm")
+                      listOf("@#\$%&*-+=_", "[]{}()<>/\\", "!?;:'`~^.|")
+                  else listOf("qwertyuiop", "asdfghjklç", "zxcvbnm")
                   for ((i, line) in rows.withIndex()) {
-                      val r = row()
-                      if (i == 2) {
-                          if (!symbols) r.key(if (shift) "⇧" else "⇪", 1.5f, "#2d3a45") { shift = !shift; buildKeys() }
-                      }
+                      val r = row(50)
+                      if (i == 2 && !symbols) r.key(if (shift) "⇧" else "⇪", 1.5f, "#2d3a45") { shift = !shift; buildKeys() }
                       for (ch in line) {
                           val s = if (!symbols && shift) ch.toString().uppercase() else ch.toString()
                           r.key(s) { typeText(s); if (shift) { shift = false; buildKeys() } }
@@ -263,13 +268,14 @@ jobs:
                           del.setOnTouchListener(repeatDelete())
                       }
                   }
-                  val last = row()
-                  last.key(if (symbols) "abc" else "?123", 1.4f, "#2d3a45") { symbols = !symbols; buildKeys() }
-                  last.key("←") { moveLeft(1) }
-                  last.key("→") { sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_RIGHT) }
-                  last.key("Tab") { currentInputConnection?.commitText("  ", 1) }
-                  last.key("espaço", 3f) { typeText(" ") }
-                  last.key("⏎", 1.4f, "#0e639c") { enter() }
+                  val last = row(50)
+                  last.key(if (symbols) "abc" else "?123", 1.5f, "#2d3a45", 16f) { symbols = !symbols; buildKeys() }
+                  last.key("↑", 1f, "#2d3a45", 18f) { sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_UP) }
+                  last.key("↓", 1f, "#2d3a45", 18f) { sendDownUpKeyEvents(KeyEvent.KEYCODE_DPAD_DOWN) }
+                  last.key(",", 1f) { typeText(",") }
+                  last.key("espaço", 3f, "#3a3a3a", 16f) { typeText(" ") }
+                  last.key(".", 1f) { typeText(".") }
+                  last.key("⏎", 1.5f, "#0e639c") { enter() }
               }
 
               private fun repeatDelete(): View.OnTouchListener {
